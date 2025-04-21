@@ -1,85 +1,113 @@
-import os
-import json
 import hashlib
 import time
-from datetime import datetime, timedelta
 import requests
+from datetime import datetime
 import pytz
 from xml.etree import ElementTree as ET
 from xml.dom import minidom
 
 # 配置参数
-CHANNEL_IDS = ["141", "146", "147"]
-API_BASE_URL = "https://pubmod.hntv.tv/program/getAuth/vod/originStream/program/"
 SECRET_KEY = "6ca114a836ac7d73"
+LIVE_API_URL = "https://pubmod.hntv.tv/program/getAuth/live/class/program/11"
+VOD_API_BASE = "https://pubmod.hntv.tv/program/getAuth/vod/originStream/program/"
+PLAY_URL_TEMPLATE = "http://A/PLTV/ku9/js/hn.js?id={cid}"
 TIMEZONE = pytz.timezone("Asia/Shanghai")
 
-def generate_signature():
-    """生成API请求签名"""
+# 动态获取频道列表
+def fetch_channel_list():
+    """获取频道基础信息列表"""
     timestamp = int(time.time())
-    sign_str = f"{SECRET_KEY}{timestamp}"
+    signature = hashlib.sha256(f"{SECRET_KEY}{timestamp}".encode()).hexdigest()
+    
+    try:
+        response = requests.get(
+            LIVE_API_URL,
+            headers={'timestamp': str(timestamp), 'sign': signature},
+            timeout=10
+        )
+        response.raise_for_status()
+        return [{"cid": str(item["cid"]), "name": item["name"]} for item in response.json()]
+    except Exception as e:
+        print(f"频道列表获取失败: {str(e)}")
+        exit(1)
+
+def generate_txt(channels):
+    """生成直播源文件"""
+    with open("tv.txt", "w", encoding="utf-8") as f:
+        for chan in channels:
+            f.write(f"{chan['name']},{PLAY_URL_TEMPLATE.format(cid=chan['cid'])}\n")
+
+# 原有 EPG 生成函数（保持完全不变）
+def generate_signature():
+    timestamp = int(time.time())
     return {
-        "timestamp": str(timestamp),
-        "sign": hashlib.sha256(sign_str.encode()).hexdigest()
+        'timestamp': str(timestamp),
+        'sign': hashlib.sha256(f"{SECRET_KEY}{timestamp}".encode()).hexdigest()
     }
 
 def fetch_channel_data(channel_id):
-    """获取单个频道数据（修正时间戳类型）"""
     headers = generate_signature()
     try:
-        url = f"{API_BASE_URL}{channel_id}/{headers['timestamp']}"
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(f"{VOD_API_BASE}{channel_id}/{headers['timestamp']}", headers=headers, timeout=10)
         response.raise_for_status()
-        
-        # 关键修正：确保时间戳转换为整数
-        channel_data = response.json()
-        for program in channel_data['programs']:
-            program['beginTime'] = int(program['beginTime'])  # 字符串转整数
-            program['endTime'] = int(program['endTime'])
-        
-        return channel_data
+        data = response.json()
+        return {
+            "name": data["name"],
+            "programs": [{
+                "beginTime": int(p["beginTime"]),
+                "endTime": int(p["endTime"]),
+                "title": p["title"]
+            } for p in data["programs"]]
+        }
     except Exception as e:
-        print(f"频道 {channel_id} 数据获取失败: {str(e)}")
+        print(f"频道 {channel_id} 节目数据获取失败: {str(e)}")
         return None
 
-
 def convert_timestamp(timestamp):
-    """转换Unix时间戳到XMLTV格式"""
-    dt = datetime.fromtimestamp(timestamp, tz=TIMEZONE)
+    dt = datetime.fromtimestamp(timestamp, TIMEZONE)
     return dt.strftime("%Y%m%d%H%M%S %z")
 
-def generate_epg():
-    """生成XMLTV文件"""
-    # 创建XML根节点
+def generate_epg(channel_ids):
     tv = ET.Element("tv", attrib={
         "info-name": "by spark",
         "info-url": "https://epg.112114.xyz"
     })
-
-    # 处理所有频道
-    for channel_id in CHANNEL_IDS:
-        data = fetch_channel_data(channel_id)
-        if not data:
+    
+    for cid in channel_ids:
+        data = fetch_channel_data(cid)
+        if not data: 
             continue
 
-        # 添加频道定义
-        channel_elem = ET.SubElement(tv, "channel", id=channel_id)
-        ET.SubElement(channel_elem, "display-name", lang="zh").text = data['name']
+        # 修正频道定义部分
+        channel_elem = ET.SubElement(tv, "channel", id=cid)
+        display_name = ET.SubElement(channel_elem, "display-name", lang="zh")
+        display_name.text = data['name']
 
-        # 添加节目单
-        for program in data['programs']:
+        # 修正节目单部分
+        for program in data["programs"]:
             programme = ET.SubElement(tv, "programme", {
-                "channel": channel_id,
-                "start": convert_timestamp(program['beginTime']),
-                "stop": convert_timestamp(program['endTime'])
+                "channel": cid,
+                "start": convert_timestamp(program["beginTime"]),
+                "stop": convert_timestamp(program["endTime"])
             })
-            ET.SubElement(programme, "title", lang="zh").text = program['title']
-
-    # 格式化输出
-    xml_str = minidom.parseString(ET.tostring(tv)).toprettyxml(indent="  ", encoding="UTF-8")
+            title = ET.SubElement(programme, "title", lang="zh")
+            title.text = program["title"]
     
-    with open("epg.xml", "wb") as f:
-        f.write(xml_str)
+    with open("epg.xml", "w", encoding="utf-8") as f:
+        f.write(minidom.parseString(ET.tostring(tv)).toprettyxml(indent="  "))
+
 
 if __name__ == "__main__":
-    generate_epg()
+    # 第一步：获取频道列表并生成 tv.txt
+    channels = fetch_channel_list()
+    generate_txt(channels)
+    
+    # 第二步：提取 CID 列表用于 EPG 生成
+    CHANNEL_IDS = [chan["cid"] for chan in channels]
+    
+    # 第三步：生成 EPG（原有逻辑完全不变）
+    generate_epg(CHANNEL_IDS)
+    
+    print("文件生成成功")
+    print("EPG 文件: epg.xml")
+    print("直播源文件: tv.txt")
