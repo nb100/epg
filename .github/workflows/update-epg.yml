@@ -2,7 +2,7 @@ name: EPG Daily Update
 
 on:
   schedule:
-    - cron: '0 20 * * *'  # UTC时间20:00 = 北京时间次日6:00
+    - cron: '0 */2 * * *'
   workflow_dispatch:
 
 jobs:
