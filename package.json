@@ -1,0 +1,14 @@
+{
+  "name": "hntv-epg",
+  "version": "1.0.0",
+  "scripts": {
+    "generate": "node scripts/epg-generator.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "crypto-js": "^4.1.1",
+    "date-fns": "^3.3.1",
+    "date-fns-tz": "^1.4.3",
+    "xmlbuilder2": "^4.1.1"
+  }
+}
