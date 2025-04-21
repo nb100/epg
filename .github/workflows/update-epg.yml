@@ -28,4 +28,4 @@ jobs:
       run: |
         git add epg.xml
         git -c user.name="GitHub Actions" -c user.email="actions@github.com" commit -m "Auto-update EPG $(date +'%Y-%m-%d %H:%M')" || echo "No changes"
-        git push origin main
+        git push https://${{ github.actor}}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git main
